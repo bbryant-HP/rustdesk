@@ -124,6 +124,9 @@ async fn start_hbbs_sync_async() {
                 // But strangely, sometimes we can get the username before login,
                 // we may not be able to get the username before login after the next restart.
                 let mut v = crate::get_sysinfo();
+                // Heritage Help Desk: hardware and network details for the Device info panel.
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                crate::heritage_stats::add_inventory(&mut v);
                 let sys_username = v["username"].as_str().unwrap_or_default().to_string();
                 // Though the username comparison is only necessary on Windows,
                 // we still keep the comparison on other platforms for consistency.
@@ -239,6 +242,11 @@ async fn start_hbbs_sync_async() {
                 v["ver"] = json!(hbb_common::get_version_number(crate::VERSION));
                 if !conns.is_empty() {
                     v["conns"] = json!(conns);
+                }
+                // Heritage Help Desk: live usage for the Device info panel.
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    v["stats"] = crate::heritage_stats::live();
                 }
                 let modified_at = LocalConfig::get_option("strategy_timestamp").parse::<i64>().unwrap_or(0);
                 v["modified_at"] = json!(modified_at);

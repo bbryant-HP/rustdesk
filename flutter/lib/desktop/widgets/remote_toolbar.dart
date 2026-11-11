@@ -7,6 +7,7 @@ import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/dialog.dart';
 import 'package:flutter_hbb/common/widgets/keyboard_shortcuts/display.dart';
 import 'package:flutter_hbb/common/widgets/toolbar.dart';
+import 'package:flutter_hbb/common/widgets/heritage_device_info.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -847,6 +848,8 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       toolbarItems.add(_KeyboardMenu(id: widget.id, ffi: widget.ffi));
     }
     toolbarItems.add(_ChatMenu(id: widget.id, ffi: widget.ffi));
+    // Heritage Help Desk: live stats and details of the remote device.
+    if (deviceInfoAvailable()) toolbarItems.add(_DeviceInfoMenu(id: widget.id));
     if (!isWeb) {
       toolbarItems.add(_VoiceCallMenu(id: widget.id, ffi: widget.ffi));
     }
@@ -2967,6 +2970,24 @@ class _VoiceCallMenu extends StatelessWidget {
       onPressed: () => bind.sessionCloseVoiceCall(sessionId: ffi.sessionId),
       color: _ToolbarTheme.redColor,
       hoverColor: _ToolbarTheme.hoverRedColor,
+    );
+  }
+}
+
+// Heritage Help Desk: opens the floating Device info panel.
+class _DeviceInfoMenu extends StatelessWidget {
+  final String id;
+  const _DeviceInfoMenu({Key? key, required this.id}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return _IconMenuButton(
+      icon: const Icon(Icons.monitor_heart_outlined,
+          color: Colors.white, size: 18),
+      tooltip: 'Device info',
+      onPressed: () => toggleDeviceInfoPanel(context, id),
+      color: _ToolbarTheme.blueColor,
+      hoverColor: _ToolbarTheme.hoverBlueColor,
     );
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/widgets/dialog.dart';
+import 'package:flutter_hbb/common/widgets/heritage_device_info.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
@@ -594,6 +595,8 @@ abstract class BasePeerCard extends StatelessWidget {
     }
     menuItems.add(MenuEntryDivider<String>());
     menuItems.add(_requestApprovalAction(context));
+    // Heritage Help Desk: live stats and details of this device.
+    if (deviceInfoAvailable()) menuItems.add(_deviceInfoAction(peer.id));
     // menuItems.add(await _openNewConnInOptAction(peer.id));
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
@@ -769,6 +772,19 @@ abstract class BasePeerCard extends StatelessWidget {
       proc: () {
         connectInPeerTab(context, peer, tab, isRDP: true);
       },
+      padding: menuPadding,
+      dismissOnClicked: true,
+    );
+  }
+
+  // Heritage Help Desk: opens the Device info dialog.
+  MenuEntryBase<String> _deviceInfoAction(String id) {
+    return MenuEntryButton<String>(
+      childBuilder: (TextStyle? style) => Text(
+        translate('Device info'),
+        style: style,
+      ),
+      proc: () => showDeviceInfoDialog(id),
       padding: menuPadding,
       dismissOnClicked: true,
     );

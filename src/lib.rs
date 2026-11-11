@@ -68,6 +68,9 @@ mod ui_interface;
 mod ui_session_interface;
 
 mod hbbs_http;
+// Heritage Help Desk: device stats for the Device info panel.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod heritage_stats;
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod clipboard_file;
