@@ -80,6 +80,26 @@ pub fn add_inventory(v: &mut Value) {
     v["net"] = network(&v["hw"]);
 }
 
+lazy_static::lazy_static! {
+    // The hardware and network details the server has (`SENT`), and the ones just collected.
+    static ref INVENTORY_SENT: Mutex<String> = Mutex::new(String::new());
+    static ref INVENTORY_PENDING: Mutex<String> = Mutex::new(String::new());
+}
+
+/// Whether the hardware or network details differ from what the server last accepted.
+pub fn inventory_pending(v: &Value) -> bool {
+    let key = json!([v["hw"], v["net"]]).to_string();
+    let changed = *INVENTORY_SENT.lock().unwrap() != key;
+    *INVENTORY_PENDING.lock().unwrap() = key;
+    changed
+}
+
+/// Called once the server has accepted a sysinfo upload.
+pub fn inventory_sent() {
+    let pending = INVENTORY_PENDING.lock().unwrap().clone();
+    *INVENTORY_SENT.lock().unwrap() = pending;
+}
+
 fn network(hw: &Value) -> Value {
     let mut cache = NETWORK.lock().unwrap();
     if let Some((at, value)) = cache.as_ref() {

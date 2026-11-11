@@ -130,7 +130,7 @@ async fn start_hbbs_sync_async() {
                 let sys_username = v["username"].as_str().unwrap_or_default().to_string();
                 // Though the username comparison is only necessary on Windows,
                 // we still keep the comparison on other platforms for consistency.
-                let need_upload = (!info_uploaded.uploaded || info_uploaded.username.as_ref() != Some(&sys_username)) &&
+                let need_upload = (!info_uploaded.uploaded || info_uploaded.username.as_ref() != Some(&sys_username) || heritage_inventory_pending(&v)) &&
                     info_uploaded.last_uploaded.map(|x| x.elapsed() >= UPLOAD_SYSINFO_TIMEOUT).unwrap_or(true);
                 if need_upload {
                     v["version"] = json!(crate::VERSION);
@@ -214,6 +214,7 @@ async fn start_hbbs_sync_async() {
                     match crate::post_request(url.replace("heartbeat", "sysinfo"), v, "").await {
                         Ok(x)  => {
                             if x == "SYSINFO_UPDATED" {
+                                heritage_inventory_sent();
                                 info_uploaded = InfoUploaded::uploaded(url.clone(), id.clone(), sys_username);
                                 log::info!("sysinfo updated");
                                 if !hash.is_empty() {
@@ -288,6 +289,24 @@ async fn start_hbbs_sync_async() {
         }
     }
 }
+
+// Heritage Help Desk: hardware details are read in the background and arrive after the first
+// sysinfo upload, which is otherwise only repeated when the username changes, so also upload
+// whenever the hardware or network details change.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn heritage_inventory_pending(v: &Value) -> bool {
+    crate::heritage_stats::inventory_pending(v)
+}
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn heritage_inventory_pending(_v: &Value) -> bool {
+    false
+}
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn heritage_inventory_sent() {
+    crate::heritage_stats::inventory_sent()
+}
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn heritage_inventory_sent() {}
 
 fn heartbeat_url() -> String {
     let url = crate::common::get_api_server(
