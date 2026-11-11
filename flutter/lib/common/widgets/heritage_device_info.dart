@@ -18,15 +18,27 @@ import '../../models/platform_model.dart';
 
 const _refreshEvery = Duration(seconds: 3);
 
-Future<Map<String, dynamic>> fetchDeviceInfo(String id) async {
+Future<Map<String, dynamic>> fetchDeviceInfo(String id) =>
+    _heritageApi('/api/heritage/device/${Uri.encodeComponent(id)}');
+
+/// GET, or POST with [body], to the Heritage server as the signed-in technician.
+Future<Map<String, dynamic>> _heritageApi(String path,
+    {Map<String, dynamic>? body}) async {
   final api = await bind.mainGetApiServer();
   if (api.isEmpty) throw 'No server is set up.';
   final token = bind.mainGetLocalOption(key: 'access_token');
   if (token.isEmpty) throw 'Sign in to see device info.';
-  final resp = await http
-      .get(Uri.parse('$api/api/heritage/device/${Uri.encodeComponent(id)}'),
-          headers: getHttpHeaders())
+  final uri = Uri.parse('$api$path');
+  final resp = await (body == null
+          ? http.get(uri, headers: getHttpHeaders())
+          : http.post(uri,
+              headers: {...getHttpHeaders(), 'Content-Type': 'application/json'},
+              body: jsonEncode(body)))
       .timeout(const Duration(seconds: 10));
+  return _decode(resp);
+}
+
+Map<String, dynamic> _decode(http.Response resp) {
   Map<String, dynamic> body = {};
   try {
     body = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
@@ -201,8 +213,36 @@ class _DeviceInfoViewState extends State<DeviceInfoView> {
     }
   }
 
+  int _tab = 0;
+
   @override
   Widget build(BuildContext context) {
+    final tabs = ['Overview', 'Programs', 'Services'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Wrap(spacing: 6, children: [
+          for (var i = 0; i < tabs.length; i++)
+            ChoiceChip(
+              label: Text(tabs[i]),
+              selected: _tab == i,
+              showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => setState(() => _tab = i),
+            ),
+        ]),
+        const SizedBox(height: 10),
+        if (_tab == 0)
+          _overview(context)
+        else
+          _SoftwareTab(
+              key: ValueKey(_tab), id: widget.id, services: _tab == 2),
+      ],
+    );
+  }
+
+  Widget _overview(BuildContext context) {
     final info = _info;
     if (info == null) {
       return Padding(
@@ -424,4 +464,272 @@ String _ago(int s) {
   if (s < 60) return '${s}s ago';
   if (s < 3600) return '${s ~/ 60} min ago';
   return '${s ~/ 3600} hr ago';
+}
+
+/// The Programs and Services tabs. The device reads its lists only while someone is looking, so
+/// this asks every few seconds while open. Admins get Uninstall (programs with a silent
+/// uninstaller) and Stop / Start / Restart (services); each asks to confirm, except Start.
+class _SoftwareTab extends StatefulWidget {
+  final String id;
+  final bool services;
+  const _SoftwareTab({Key? key, required this.id, required this.services})
+      : super(key: key);
+
+  @override
+  State<_SoftwareTab> createState() => _SoftwareTabState();
+}
+
+class _SoftwareTabState extends State<_SoftwareTab> {
+  Map<String, dynamic>? _data;
+  String? _error;
+  Timer? _timer;
+  bool _loading = false;
+  String _query = '';
+  bool _runningOnly = true;
+  String? _confirm; // "<op>|<target>" of the row asking to confirm
+  bool _sending = false;
+
+  String get _path =>
+      '/api/heritage/device/${Uri.encodeComponent(widget.id)}/software';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _timer = Timer.periodic(_refreshEvery, (_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    if (_loading) return;
+    _loading = true;
+    try {
+      final d = await _heritageApi(_path);
+      if (mounted) {
+        setState(() {
+          _data = d;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      _loading = false;
+    }
+  }
+
+  Future<void> _act(String kind, String target, String op) async {
+    setState(() {
+      _sending = true;
+      _confirm = null;
+    });
+    try {
+      await _heritageApi(
+          '/api/heritage/device/${Uri.encodeComponent(widget.id)}/action',
+          body: {'kind': kind, 'target': target, 'op': op});
+      _error = null;
+    } catch (e) {
+      _error = e.toString();
+    }
+    if (mounted) setState(() => _sending = false);
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = _data;
+    final muted = TextStyle(color: Theme.of(context).hintColor, fontSize: 13);
+    if (d == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+            child: _error == null
+                ? const CircularProgressIndicator()
+                : Text(_error!, textAlign: TextAlign.center)),
+      );
+    }
+    final key = widget.services ? 'services' : 'programs';
+    final list = d[key] is List ? d[key] as List : null;
+    final canAct = d['can_act'] == true;
+    final words = _query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+    final items = (list ?? const [])
+        .map(_map)
+        .where((x) => !widget.services || !_runningOnly || _str(x['state']) == 'Running')
+        .where((x) {
+      final hay = widget.services
+          ? '${x['display']} ${x['name']}'.toLowerCase()
+          : '${x['name']} ${x['publisher']}'.toLowerCase();
+      return words.every(hay.contains);
+    }).toList();
+    final actions = (d['actions'] is List ? d['actions'] as List : const [])
+        .map(_map)
+        .toList()
+        .reversed
+        .take(3)
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(children: [
+          Expanded(
+            child: TextField(
+              decoration: InputDecoration(
+                isDense: true,
+                prefixIcon: const Icon(Icons.search, size: 18),
+                hintText: widget.services ? 'Search services' : 'Search programs',
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (v) => setState(() => _query = v),
+            ),
+          ),
+          if (widget.services) ...[
+            const SizedBox(width: 8),
+            FilterChip(
+              label: const Text('Running only'),
+              selected: _runningOnly,
+              visualDensity: VisualDensity.compact,
+              onSelected: (v) => setState(() => _runningOnly = v),
+            ),
+          ],
+        ]),
+        const SizedBox(height: 6),
+        if (_error != null)
+          Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        if (_str(d['error']).isNotEmpty)
+          Text(_str(d['error']), style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        if (list == null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(children: [
+              const SizedBox(
+                  width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(
+                      'Getting the list from the device. This needs the current Heritage-HelpDesk on it.',
+                      style: muted)),
+            ]),
+          )
+        else
+          Text(
+              '${items.length} of ${list.length} ${widget.services ? 'services' : 'programs'}'
+              '${d['age'] is num ? ' · updated ${_ago((d['age'] as num).toInt())}' : ''}'
+              '${canAct ? '' : ' · only admins can change them'}',
+              style: muted),
+        for (final a in actions) _actionLine(context, a),
+        const Divider(height: 16),
+        for (final x in items.take(400))
+          widget.services ? _serviceRow(context, x, canAct, muted) : _programRow(context, x, canAct, muted),
+      ],
+    );
+  }
+
+  Widget _actionLine(BuildContext context, Map a) {
+    final status = _str(a['status']);
+    final icon = status == 'done'
+        ? const Icon(Icons.check_circle, size: 16, color: Colors.green)
+        : status == 'failed'
+            ? Icon(Icons.error, size: 16, color: Theme.of(context).colorScheme.error)
+            : const SizedBox(
+                width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2));
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.only(top: 2), child: icon),
+        const SizedBox(width: 6),
+        Expanded(child: Text('${_str(a['label'])}: ${_str(a['message'])}')),
+      ]),
+    );
+  }
+
+  Widget _button(String label, VoidCallback? onPressed, {bool danger = false}) =>
+      TextButton(
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          minimumSize: const Size(0, 30),
+          foregroundColor: danger ? Theme.of(context).colorScheme.error : null,
+        ),
+        onPressed: _sending ? null : onPressed,
+        child: Text(label),
+      );
+
+  /// The row's buttons, or its "Are you sure?" pair when it is the one asking to confirm.
+  Widget _confirmOr(String op, String target, String question, List<Widget> buttons,
+      VoidCallback onConfirm) {
+    if (_confirm != '$op|$target') return Row(mainAxisSize: MainAxisSize.min, children: buttons);
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(question),
+      _button('Cancel', () => setState(() => _confirm = null)),
+      _button('Yes', onConfirm, danger: true),
+    ]);
+  }
+
+  Widget _programRow(BuildContext context, Map p, bool canAct, TextStyle muted) {
+    final target = _str(p['key']);
+    final details = [
+      _str(p['version']),
+      _str(p['publisher']),
+      if (p['size_kb'] is num && p['size_kb'] > 0) _bytes((p['size_kb'] as num) * 1024),
+    ].where((s) => s.isNotEmpty).join(' · ');
+    Widget? trailing;
+    if (canAct && p['silent'] == true) {
+      trailing = _confirmOr('uninstall', target, 'Uninstall?',
+          [_button('Uninstall', () => setState(() => _confirm = 'uninstall|$target'), danger: true)],
+          () => _act('uninstall', target, ''));
+    } else if (canAct) {
+      trailing = Tooltip(
+        message: 'No silent uninstaller. Remove it by hand in a session.',
+        child: Icon(Icons.info_outline, size: 16, color: Theme.of(context).hintColor),
+      );
+    }
+    return _row(_str(p['name']), details, trailing, muted);
+  }
+
+  Widget _serviceRow(BuildContext context, Map s, bool canAct, TextStyle muted) {
+    final target = _str(s['name']);
+    final running = _str(s['state']) == 'Running';
+    final stopped = _str(s['state']) == 'Stopped';
+    final details = [target, _str(s['start']), _str(s['state'])].where((x) => x.isNotEmpty).join(' · ');
+    Widget? trailing;
+    if (canAct && running) {
+      trailing = _confirmOr(
+          _confirm?.startsWith('stop|') == true ? 'stop' : 'restart',
+          target,
+          _confirm?.startsWith('stop|') == true ? 'Stop?' : 'Restart?',
+          [
+            _button('Restart', () => setState(() => _confirm = 'restart|$target')),
+            _button('Stop', () => setState(() => _confirm = 'stop|$target'), danger: true),
+          ],
+          () => _act('service', target, _confirm!.split('|').first));
+    } else if (canAct && stopped) {
+      trailing = _button('Start', () => _act('service', target, 'start'));
+    }
+    return _row(_str(s['display']).isEmpty ? target : _str(s['display']), details, trailing, muted,
+        dot: running ? Colors.green : Colors.grey);
+  }
+
+  Widget _row(String title, String details, Widget? trailing, TextStyle muted, {Color? dot}) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          if (dot != null) ...[
+            Icon(Icons.circle, size: 8, color: dot),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+              if (details.isNotEmpty) Text(details, style: muted),
+            ]),
+          ),
+          if (trailing != null) trailing,
+        ]),
+      );
 }

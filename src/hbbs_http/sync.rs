@@ -276,6 +276,10 @@ async fn start_hbbs_sync_async() {
                                 log::info!("strategy updated");
                             }
                         }
+                        // Heritage Help Desk: programs and services lists, and admins' signed commands.
+                        if let Some(h) = rsp.remove("heritage") {
+                            heritage_handle(h, &url);
+                        }
                         if let Some(rsp_modified_at) = rsp.remove("modified_at") {
                             if let Ok(rsp_modified_at) = serde_json::from_value::<i64>(rsp_modified_at) {
                                 if rsp_modified_at != modified_at {
@@ -307,6 +311,12 @@ fn heritage_inventory_sent() {
 }
 #[cfg(any(target_os = "android", target_os = "ios"))]
 fn heritage_inventory_sent() {}
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn heritage_handle(h: Value, url: &str) {
+    crate::heritage_actions::handle(h, url)
+}
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn heritage_handle(_h: Value, _url: &str) {}
 
 fn heartbeat_url() -> String {
     let url = crate::common::get_api_server(

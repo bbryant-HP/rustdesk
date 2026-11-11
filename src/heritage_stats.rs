@@ -204,10 +204,16 @@ $dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.Serv
 
 #[cfg(windows)]
 fn read_hardware() -> Option<Value> {
+    run_powershell(HARDWARE_SCRIPT, Duration::from_secs(60))
+}
+
+/// Runs a script in a hidden PowerShell and parses the JSON object it prints.
+#[cfg(windows)]
+pub(crate) fn run_powershell(script: &str, timeout: Duration) -> Option<Value> {
     use std::{io::Read, os::windows::process::CommandExt, process::{Command, Stdio}};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // -EncodedCommand takes UTF-16LE base64, which sidesteps every quoting problem.
-    let utf16: Vec<u8> = HARDWARE_SCRIPT.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
     let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_owned());
     let exe = format!("{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     let mut child = Command::new(exe)
@@ -230,9 +236,9 @@ fn read_hardware() -> Option<Value> {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() < Duration::from_secs(60) => std::thread::sleep(Duration::from_millis(250)),
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(250)),
             _ => {
-                log::warn!("Device info: hardware read timed out");
+                log::warn!("Device info: PowerShell timed out after {timeout:?}");
                 child.kill().ok();
                 child.wait().ok();
                 return None;
@@ -243,7 +249,7 @@ fn read_hardware() -> Option<Value> {
     match serde_json::from_str::<Value>(out.trim()) {
         Ok(v) if v.is_object() => Some(v),
         _ => {
-            log::warn!("Device info: unexpected hardware read output ({} bytes)", out.len());
+            log::warn!("Device info: unexpected PowerShell output ({} bytes)", out.len());
             None
         }
     }
@@ -271,3 +277,4 @@ fn read_hardware() -> Option<Value> {
 fn read_hardware() -> Option<Value> {
     None
 }
+
