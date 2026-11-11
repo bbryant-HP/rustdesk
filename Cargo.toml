@@ -125,6 +125,7 @@ winapi = { version = "0.3", features = [
     "cfgmgr32",
     "ioapiset",
     "winspool",
+    "wingdi", # Heritage Help Desk: screen thumbnails (src/heritage_actions.rs)
 ] }
 windows = { version = "0.61", features = [
     "Wdk_Foundation",

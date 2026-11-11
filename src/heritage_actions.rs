@@ -77,9 +77,102 @@ fn send_screen(base: String) {
     });
 }
 
+const NOTHING_TO_SHOW: &str =
+    "Nothing to show: the PC is at the sign-in or lock screen, or no one is signed in.";
+
+/// Copies the main screen with plain Windows GDI calls (no script: antivirus rightly blocks
+/// PowerShell that captures the screen), then shrinks it to a JPEG at most 960 pixels wide. This
+/// runs in the help desk's process in the signed-in user's session, which is per-monitor DPI
+/// aware, so the copy is full resolution.
 #[cfg(windows)]
 fn read_screen() -> Option<Value> {
-    crate::heritage_stats::run_powershell(SCREEN_SCRIPT, Duration::from_secs(30))
+    let (w, h, bgra) = match capture_main_screen() {
+        Ok(shot) => shot,
+        Err(e) => return Some(json!({ "error": e })),
+    };
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for p in bgra.chunks_exact(4) {
+        rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+    }
+    let img = image::RgbImage::from_raw(w as u32, h as u32, rgb)?;
+    let (tw, th) = if w > 960 {
+        (960u32, ((h * 960) / w).max(1) as u32)
+    } else {
+        (w as u32, h as u32)
+    };
+    let small = image::imageops::resize(&img, tw, th, image::imageops::FilterType::Triangle);
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 60)
+        .encode(small.as_raw(), tw, th, image::ColorType::Rgb8)
+        .ok()?;
+    Some(json!({
+        "jpeg": hbb_common::base64::encode(&jpeg),
+        "width": tw,
+        "height": th,
+    }))
+}
+
+#[cfg(windows)]
+fn capture_main_screen() -> Result<(usize, usize, Vec<u8>), &'static str> {
+    use std::ptr::null_mut;
+    use winapi::um::{
+        wingdi::{
+            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+            GetDIBits, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT,
+            DIB_RGB_COLORS, SRCCOPY,
+        },
+        winuser::{GetDC, GetSystemMetrics, ReleaseDC, SM_CXSCREEN, SM_CYSCREEN},
+    };
+    unsafe {
+        let w = GetSystemMetrics(SM_CXSCREEN);
+        let h = GetSystemMetrics(SM_CYSCREEN);
+        if w <= 0 || h <= 0 {
+            return Err(NOTHING_TO_SHOW);
+        }
+        let screen = GetDC(null_mut());
+        if screen.is_null() {
+            return Err(NOTHING_TO_SHOW);
+        }
+        let mem = CreateCompatibleDC(screen);
+        let bmp = CreateCompatibleBitmap(screen, w, h);
+        let mut buf = vec![0u8; (w as usize) * (h as usize) * 4];
+        let mut lines = 0;
+        if !mem.is_null() && !bmp.is_null() {
+            let old = SelectObject(mem, bmp as _);
+            let copied = BitBlt(mem, 0, 0, w, h, screen, 0, 0, SRCCOPY | CAPTUREBLT) != 0;
+            SelectObject(mem, old);
+            if copied {
+                let mut info: BITMAPINFO = std::mem::zeroed();
+                info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+                info.bmiHeader.biWidth = w;
+                info.bmiHeader.biHeight = -h; // top row first
+                info.bmiHeader.biPlanes = 1;
+                info.bmiHeader.biBitCount = 32;
+                info.bmiHeader.biCompression = BI_RGB;
+                lines = GetDIBits(
+                    mem,
+                    bmp,
+                    0,
+                    h as u32,
+                    buf.as_mut_ptr() as _,
+                    &mut info,
+                    DIB_RGB_COLORS,
+                );
+            }
+        }
+        if !bmp.is_null() {
+            DeleteObject(bmp as _);
+        }
+        if !mem.is_null() {
+            DeleteDC(mem);
+        }
+        ReleaseDC(null_mut(), screen);
+        // An all-black copy means the desktop isn't ours to see (sign-in or lock screen).
+        if lines == 0 || buf.chunks_exact(4).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0) {
+            return Err(NOTHING_TO_SHOW);
+        }
+        Ok((w as usize, h as usize, buf))
+    }
 }
 
 #[cfg(not(windows))]
@@ -287,37 +380,6 @@ try {
     Done $false "$name has no silent uninstaller. Remove it by hand in a session."
   }
 } catch { Done $false ("The uninstaller couldn't start: " + $_.Exception.Message) }
-"#;
-
-// Runs in the help desk's process in the signed-in user's session, so it sees their desktop. At
-// the sign-in or lock screen there is nothing to capture, and it says so instead.
-#[cfg(windows)]
-const SCREEN_SCRIPT: &str = r#"
-$ErrorActionPreference = 'Stop'
-try {
-  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-  Add-Type -Name Dpi -Namespace Heritage -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
-  [Heritage.Dpi]::SetProcessDPIAware() | Out-Null
-  $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-  $full = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-  $g = [System.Drawing.Graphics]::FromImage($full)
-  $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-  $g.Dispose()
-  $w = [Math]::Min(960, $b.Width); $h = [int]($b.Height * $w / $b.Width)
-  $small = New-Object System.Drawing.Bitmap $w, $h
-  $g = [System.Drawing.Graphics]::FromImage($small)
-  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-  $g.DrawImage($full, 0, 0, $w, $h)
-  $g.Dispose(); $full.Dispose()
-  $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-  $params = New-Object System.Drawing.Imaging.EncoderParameters 1
-  $params.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 60L
-  $ms = New-Object System.IO.MemoryStream
-  $small.Save($ms, $codec, $params)
-  [ordered]@{ jpeg = [Convert]::ToBase64String($ms.ToArray()); width = $w; height = $h } | ConvertTo-Json -Compress
-} catch {
-  [ordered]@{ error = 'Nothing to show: the PC is at the sign-in or lock screen, or no one is signed in.' } | ConvertTo-Json -Compress
-}
 "#;
 
 #[cfg(windows)]
