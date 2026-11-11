@@ -16,6 +16,7 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 const ACTION_PREFIX: &[u8] = b"heritage-action:";
 
 lazy_static::lazy_static! {
+    static ref SCREEN_BUSY: Mutex<bool> = Mutex::new(false);
     static ref SOFTWARE_BUSY: Mutex<bool> = Mutex::new(false);
     // Commands already started, by id, with their result once finished (re-sent if asked again).
     static ref ACTIONS: Mutex<HashMap<String, Option<Value>>> = Default::default();
@@ -26,6 +27,9 @@ pub fn handle(h: Value, heartbeat_url: &str) {
     let base = heartbeat_url.trim_end_matches("/heartbeat").to_owned(); // ".../api"
     if h["software"].as_bool() == Some(true) {
         refresh_software(base.clone());
+    }
+    if h["screen"].as_bool() == Some(true) {
+        send_screen(base.clone());
     }
     if let Some(list) = h["actions"].as_array() {
         for a in list {
@@ -52,6 +56,35 @@ fn refresh_software(base: String) {
         );
         post(&base, "software", &mut body);
     });
+}
+
+/// A small picture of the main screen, like ScreenConnect's thumbnails. The server asks for one
+/// only while someone is looking at this device in a list or in Device info.
+fn send_screen(base: String) {
+    {
+        let mut busy = SCREEN_BUSY.lock().unwrap();
+        if *busy {
+            return;
+        }
+        *busy = true;
+    }
+    std::thread::spawn(move || {
+        let shot = read_screen();
+        *SCREEN_BUSY.lock().unwrap() = false;
+        let mut body =
+            shot.unwrap_or_else(|| json!({"error": "The screen couldn't be captured."}));
+        post(&base, "screen", &mut body);
+    });
+}
+
+#[cfg(windows)]
+fn read_screen() -> Option<Value> {
+    crate::heritage_stats::run_powershell(SCREEN_SCRIPT, Duration::from_secs(30))
+}
+
+#[cfg(not(windows))]
+fn read_screen() -> Option<Value> {
+    None
 }
 
 fn post(base: &str, path: &str, body: &mut Value) {
@@ -254,6 +287,37 @@ try {
     Done $false "$name has no silent uninstaller. Remove it by hand in a session."
   }
 } catch { Done $false ("The uninstaller couldn't start: " + $_.Exception.Message) }
+"#;
+
+// Runs in the help desk's process in the signed-in user's session, so it sees their desktop. At
+// the sign-in or lock screen there is nothing to capture, and it says so instead.
+#[cfg(windows)]
+const SCREEN_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+  Add-Type -Name Dpi -Namespace Heritage -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
+  [Heritage.Dpi]::SetProcessDPIAware() | Out-Null
+  $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $full = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+  $g = [System.Drawing.Graphics]::FromImage($full)
+  $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+  $g.Dispose()
+  $w = [Math]::Min(960, $b.Width); $h = [int]($b.Height * $w / $b.Width)
+  $small = New-Object System.Drawing.Bitmap $w, $h
+  $g = [System.Drawing.Graphics]::FromImage($small)
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.DrawImage($full, 0, 0, $w, $h)
+  $g.Dispose(); $full.Dispose()
+  $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+  $params = New-Object System.Drawing.Imaging.EncoderParameters 1
+  $params.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 60L
+  $ms = New-Object System.IO.MemoryStream
+  $small.Save($ms, $codec, $params)
+  [ordered]@{ jpeg = [Convert]::ToBase64String($ms.ToArray()); width = $w; height = $h } | ConvertTo-Json -Compress
+} catch {
+  [ordered]@{ error = 'Nothing to show: the PC is at the sign-in or lock screen, or no one is signed in.' } | ConvertTo-Json -Compress
+}
 "#;
 
 #[cfg(windows)]

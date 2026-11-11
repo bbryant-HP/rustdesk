@@ -317,7 +317,9 @@ class _PeerCardState extends State<_PeerCard>
                               Container(
                                 padding: const EdgeInsets.all(6),
                                 child:
-                                    getPlatformImage(peer.platform, size: 60),
+                                    // Heritage Help Desk: the screen thumbnail, when there is one.
+                                    heritageThumbOr(
+                                        peer.id, getPlatformImage(peer.platform, size: 60)),
                               ),
                               Row(
                                 children: [

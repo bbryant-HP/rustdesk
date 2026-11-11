@@ -9,6 +9,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -51,6 +52,110 @@ Map<String, dynamic> _decode(http.Response resp) {
 
 bool deviceInfoAvailable() =>
     bind.mainGetLocalOption(key: 'access_token').isNotEmpty;
+
+/// A device card's picture: its screen thumbnail when signed in and one has arrived, else
+/// [fallback] (the platform icon).
+Widget heritageThumbOr(String id, Widget fallback, {double height = 60}) =>
+    deviceInfoAvailable()
+        ? HeritageScreenThumb(id: id, fallback: fallback, height: height)
+        : fallback;
+
+/// The device's latest screen picture, like ScreenConnect's thumbnails. The device sends one about
+/// every minute while a list shows it, and every 10 seconds when [live] (Device info is open).
+class HeritageScreenThumb extends StatefulWidget {
+  final String id;
+  final Widget fallback;
+  final double? height;
+  final bool live;
+  const HeritageScreenThumb(
+      {Key? key, required this.id, required this.fallback, this.height, this.live = false})
+      : super(key: key);
+
+  @override
+  State<HeritageScreenThumb> createState() => _HeritageScreenThumbState();
+}
+
+class _HeritageScreenThumbState extends State<HeritageScreenThumb> {
+  Uint8List? _jpeg;
+  int? _age;
+  String _note = '';
+  Timer? _timer;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    // Soon after the first ask (the device needs a few seconds), then at the device's pace.
+    Future.delayed(const Duration(seconds: 15), _load);
+    _timer = Timer.periodic(Duration(seconds: widget.live ? 5 : 60), (_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    if (_loading || !mounted) return;
+    _loading = true;
+    try {
+      final api = await bind.mainGetApiServer();
+      final resp = await http
+          .get(
+              Uri.parse(
+                  '$api/api/heritage/device/${Uri.encodeComponent(widget.id)}/screen${widget.live ? '?live=1' : ''}'),
+              headers: getHttpHeaders())
+          .timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      if (resp.statusCode == 200 &&
+          (resp.headers['content-type'] ?? '').startsWith('image/')) {
+        setState(() {
+          _jpeg = resp.bodyBytes;
+          _age = int.tryParse(resp.headers['x-age'] ?? '');
+          _note = '';
+        });
+      } else {
+        String note = '';
+        try {
+          final j = jsonDecode(utf8.decode(resp.bodyBytes));
+          note = (j is Map ? (j['note'] ?? j['error'] ?? '') : '').toString();
+        } catch (_) {}
+        setState(() => _note = note);
+      }
+    } catch (_) {
+      // Keep the last picture; the next try may work.
+    } finally {
+      _loading = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final jpeg = _jpeg;
+    if (jpeg == null) {
+      if (widget.live && _note.isNotEmpty) {
+        return Text(_note, style: TextStyle(color: Theme.of(context).hintColor, fontSize: 13));
+      }
+      return widget.fallback;
+    }
+    final image = ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.memory(jpeg,
+          height: widget.height, fit: BoxFit.contain, gaplessPlayback: true),
+    );
+    if (!widget.live) return image;
+    final age = _age;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      image,
+      const SizedBox(height: 4),
+      Text(
+          'Screen · ${age == null ? '' : _ago(age)}${_note.isNotEmpty ? ' · $_note' : ''}',
+          style: TextStyle(color: Theme.of(context).hintColor, fontSize: 12)),
+    ]);
+  }
+}
 
 /// The right-click menu's Device info: a dialog that keeps itself up to date.
 void showDeviceInfoDialog(String id) {
@@ -259,6 +364,11 @@ class _DeviceInfoViewState extends State<DeviceInfoView> {
     final ip = _map(info['ip']);
     final children = <Widget>[
       _header(context, info, stats),
+      Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: HeritageScreenThumb(
+            id: widget.id, live: true, fallback: const SizedBox.shrink()),
+      ),
       if (_error != null)
         Padding(
           padding: const EdgeInsets.only(top: 6),
