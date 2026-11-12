@@ -16,6 +16,10 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 const ACTION_PREFIX: &[u8] = b"heritage-action:";
 
 lazy_static::lazy_static! {
+    // Kept between reads: a process's CPU use is measured since the previous read.
+    static ref PROCESS_SYS: Mutex<hbb_common::sysinfo::System> =
+        Mutex::new(hbb_common::sysinfo::System::new());
+    static ref PROCESSES_BUSY: Mutex<bool> = Mutex::new(false);
     static ref SCREEN_BUSY: Mutex<bool> = Mutex::new(false);
     static ref SOFTWARE_BUSY: Mutex<bool> = Mutex::new(false);
     // Commands already started, by id, with their result once finished (re-sent if asked again).
@@ -30,6 +34,9 @@ pub fn handle(h: Value, heartbeat_url: &str) {
     }
     if h["screen"].as_bool() == Some(true) {
         send_screen(base.clone());
+    }
+    if h["processes"].as_bool() == Some(true) {
+        send_processes(base.clone());
     }
     if let Some(list) = h["actions"].as_array() {
         for a in list {
@@ -180,6 +187,113 @@ fn read_screen() -> Option<Value> {
     None
 }
 
+/// Windows' own processes, which ending would crash or log out the PC, and the help desk itself.
+const PROTECTED_PROCESSES: &[&str] = &[
+    "system",
+    "system idle process",
+    "idle",
+    "registry",
+    "secure system",
+    "memory compression",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "winlogon.exe",
+    "services.exe",
+    "lsass.exe",
+    "lsaiso.exe",
+];
+
+fn is_protected_process(name: &str, pid: u32) -> bool {
+    let n = name.to_lowercase();
+    let app = crate::get_app_name().to_lowercase();
+    pid <= 4
+        || pid == std::process::id()
+        || PROTECTED_PROCESSES.contains(&n.as_str())
+        || n.contains("rustdesk")
+        || (!app.is_empty() && n.contains(&app))
+}
+
+fn pid_of(p: &hbb_common::sysinfo::Process) -> u32 {
+    p.pid().to_string().parse().unwrap_or(0)
+}
+
+/// The Processes tab, like Task Manager: every process with its CPU and memory use, busiest first.
+fn send_processes(base: String) {
+    {
+        let mut busy = PROCESSES_BUSY.lock().unwrap();
+        if *busy {
+            return;
+        }
+        *busy = true;
+    }
+    std::thread::spawn(move || {
+        let list = list_processes();
+        *PROCESSES_BUSY.lock().unwrap() = false;
+        post(&base, "processes", &mut json!({ "processes": list }));
+    });
+}
+
+fn list_processes() -> Vec<Value> {
+    let mut sys = PROCESS_SYS.lock().unwrap();
+    if sys.cpus().is_empty() {
+        sys.refresh_cpu();
+    }
+    sys.refresh_processes();
+    // A process's CPU use adds up across cores; show it as a share of the whole PC, like Task Manager.
+    let cores = sys.cpus().len().max(1) as f32;
+    let mut list: Vec<Value> = sys
+        .processes()
+        .values()
+        .map(|p| {
+            let pid = pid_of(p);
+            json!({
+                "pid": pid,
+                "name": p.name(),
+                "cpu": ((p.cpu_usage() / cores) * 10.).round() / 10.,
+                "memory": p.memory(),
+                "exe": p.exe().to_string_lossy(),
+                "protected": is_protected_process(p.name(), pid),
+            })
+        })
+        .collect();
+    list.sort_by(|a, b| {
+        let cpu = |v: &Value| v["cpu"].as_f64().unwrap_or(0.);
+        cpu(b)
+            .partial_cmp(&cpu(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b["memory"].as_u64().cmp(&a["memory"].as_u64()))
+    });
+    list
+}
+
+/// End task. The command names the process as well as its ID, so a recycled ID is never hit.
+fn end_process(cmd: &Value) -> (bool, String) {
+    let Ok(pid) = cmd["target"].as_str().unwrap_or_default().parse::<u32>() else {
+        return (false, "Not a process ID.".to_owned());
+    };
+    let want = cmd["name"].as_str().unwrap_or_default();
+    let mut sys = PROCESS_SYS.lock().unwrap();
+    sys.refresh_processes();
+    let Some(p) = sys.process(hbb_common::sysinfo::Pid::from_u32(pid)) else {
+        return (true, format!("{want} had already ended."));
+    };
+    if p.name() != want {
+        return (
+            false,
+            format!("Process {pid} is now {}, not {want}. Nothing was ended.", p.name()),
+        );
+    }
+    if is_protected_process(p.name(), pid) {
+        return (false, format!("{want} is part of Windows or the help desk and can't be ended."));
+    }
+    if p.kill() {
+        (true, format!("Ended {want}."))
+    } else {
+        (false, format!("Windows wouldn't end {want}."))
+    }
+}
+
 fn post(base: &str, path: &str, body: &mut Value) {
     body["id"] = json!(Config::get_id());
     body["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));
@@ -290,6 +404,7 @@ fn run_action(cmd: &Value) -> (bool, String) {
     let target = cmd["target"].as_str().unwrap_or_default();
     let app = crate::get_app_name();
     let (script, timeout) = match cmd["kind"].as_str() {
+        Some("process") => return end_process(cmd),
         Some("uninstall") => (
             UNINSTALL_SCRIPT
                 .replace("__KEY__", &b64(target))

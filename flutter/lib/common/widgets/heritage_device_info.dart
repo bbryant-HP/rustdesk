@@ -322,7 +322,7 @@ class _DeviceInfoViewState extends State<DeviceInfoView> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = ['Overview', 'Programs', 'Services'];
+    final tabs = ['Overview', 'Programs', 'Services', 'Processes'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -342,7 +342,9 @@ class _DeviceInfoViewState extends State<DeviceInfoView> {
           _overview(context)
         else
           _SoftwareTab(
-              key: ValueKey(_tab), id: widget.id, services: _tab == 2),
+              key: ValueKey(_tab),
+              id: widget.id,
+              list: const ['programs', 'services', 'processes'][_tab - 1]),
       ],
     );
   }
@@ -576,13 +578,14 @@ String _ago(int s) {
   return '${s ~/ 3600} hr ago';
 }
 
-/// The Programs and Services tabs. The device reads its lists only while someone is looking, so
-/// this asks every few seconds while open. Admins get Uninstall (programs with a silent
-/// uninstaller) and Stop / Start / Restart (services); each asks to confirm, except Start.
+/// The Programs, Services and Processes tabs. The device reads its lists only while someone is
+/// looking, so this asks every few seconds while open. Admins get Uninstall (programs with a
+/// silent uninstaller), Stop / Start / Restart (services) and End task (processes); each asks to
+/// confirm, except Start.
 class _SoftwareTab extends StatefulWidget {
   final String id;
-  final bool services;
-  const _SoftwareTab({Key? key, required this.id, required this.services})
+  final String list; // "programs", "services" or "processes"
+  const _SoftwareTab({Key? key, required this.id, required this.list})
       : super(key: key);
 
   @override
@@ -600,7 +603,10 @@ class _SoftwareTabState extends State<_SoftwareTab> {
   bool _sending = false;
 
   String get _path =>
-      '/api/heritage/device/${Uri.encodeComponent(widget.id)}/software';
+      '/api/heritage/device/${Uri.encodeComponent(widget.id)}/software'
+      '?want=${widget.list == 'processes' ? 'processes' : 'software'}';
+
+  bool get _services => widget.list == 'services';
 
   @override
   void initState() {
@@ -663,17 +669,20 @@ class _SoftwareTabState extends State<_SoftwareTab> {
                 : Text(_error!, textAlign: TextAlign.center)),
       );
     }
-    final key = widget.services ? 'services' : 'programs';
+    final key = widget.list;
     final list = d[key] is List ? d[key] as List : null;
     final canAct = d['can_act'] == true;
     final words = _query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
     final items = (list ?? const [])
         .map(_map)
-        .where((x) => !widget.services || !_runningOnly || _str(x['state']) == 'Running')
+        .where((x) => !_services || !_runningOnly || _str(x['state']) == 'Running')
         .where((x) {
-      final hay = widget.services
-          ? '${x['display']} ${x['name']}'.toLowerCase()
-          : '${x['name']} ${x['publisher']}'.toLowerCase();
+      final hay = (_services
+              ? '${x['display']} ${x['name']}'
+              : widget.list == 'processes'
+                  ? '${x['name']} ${x['exe']} ${x['pid']}'
+                  : '${x['name']} ${x['publisher']}')
+          .toLowerCase();
       return words.every(hay.contains);
     }).toList();
     final actions = (d['actions'] is List ? d['actions'] as List : const [])
@@ -692,13 +701,13 @@ class _SoftwareTabState extends State<_SoftwareTab> {
               decoration: InputDecoration(
                 isDense: true,
                 prefixIcon: const Icon(Icons.search, size: 18),
-                hintText: widget.services ? 'Search services' : 'Search programs',
+                hintText: 'Search ${widget.list}',
                 border: const OutlineInputBorder(),
               ),
               onChanged: (v) => setState(() => _query = v),
             ),
           ),
-          if (widget.services) ...[
+          if (_services) ...[
             const SizedBox(width: 8),
             FilterChip(
               label: const Text('Running only'),
@@ -728,14 +737,18 @@ class _SoftwareTabState extends State<_SoftwareTab> {
           )
         else
           Text(
-              '${items.length} of ${list.length} ${widget.services ? 'services' : 'programs'}'
+              '${items.length} of ${list.length} ${widget.list}'
               '${d['age'] is num ? ' · updated ${_ago((d['age'] as num).toInt())}' : ''}'
               '${canAct ? '' : ' · only admins can change them'}',
               style: muted),
         for (final a in actions) _actionLine(context, a),
         const Divider(height: 16),
         for (final x in items.take(400))
-          widget.services ? _serviceRow(context, x, canAct, muted) : _programRow(context, x, canAct, muted),
+          _services
+              ? _serviceRow(context, x, canAct, muted)
+              : widget.list == 'processes'
+                  ? _processRow(context, x, canAct, muted)
+                  : _programRow(context, x, canAct, muted),
       ],
     );
   }
@@ -823,6 +836,24 @@ class _SoftwareTabState extends State<_SoftwareTab> {
     }
     return _row(_str(s['display']).isEmpty ? target : _str(s['display']), details, trailing, muted,
         dot: running ? Colors.green : Colors.grey);
+  }
+
+  Widget _processRow(BuildContext context, Map p, bool canAct, TextStyle muted) {
+    final target = _str(p['pid']);
+    final cpu = p['cpu'] is num ? (p['cpu'] as num).toDouble() : 0.0;
+    final details = [
+      'PID $target',
+      'CPU ${cpu.toStringAsFixed(cpu < 10 ? 1 : 0)}%',
+      if (p['memory'] is num) _bytes(p['memory']),
+      _str(p['exe']),
+    ].where((s) => s.isNotEmpty).join(' · ');
+    Widget? trailing;
+    if (canAct && p['protected'] != true) {
+      trailing = _confirmOr('end', target, 'End it?',
+          [_button('End task', () => setState(() => _confirm = 'end|$target'), danger: true)],
+          () => _act('process', target, 'end'));
+    }
+    return _row(_str(p['name']), details, trailing, muted);
   }
 
   Widget _row(String title, String details, Widget? trailing, TextStyle muted, {Color? dot}) =>
