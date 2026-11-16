@@ -84,7 +84,9 @@ class _InstallPageBodyState extends State<_InstallPageBody>
     final installOptions = jsonDecode(bind.installInstallOptions());
     startmenu.value = installOptions['STARTMENUSHORTCUTS'] != '0';
     desktopicon.value = installOptions['DESKTOPSHORTCUTS'] != '0';
-    printer.value = installOptions['PRINTER'] == '1';
+    // Heritage Help Desk: no printer. RustDesk's printer add-on only works under the RustDesk name,
+    // so the renamed app ships without it and the option is hidden (see the checkbox below).
+    printer.value = false;
   }
 
   Future<void> _loadPrinterStatus() async {
@@ -211,7 +213,7 @@ class _InstallPageBodyState extends State<_InstallPageBody>
                   .marginOnly(bottom: 7),
               Option(desktopicon, label: 'Create desktop icon')
                   .marginOnly(bottom: 7),
-              Option(printer, label: 'Install {$appName} Printer'),
+              // Heritage Help Desk: the printer option is hidden; it can't work in the renamed app.
               Container(
                   padding: EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -307,7 +309,6 @@ class _InstallPageBodyState extends State<_InstallPageBody>
       String args = '';
       if (startmenu.value) args += ' startmenu';
       if (desktopicon.value) args += ' desktopicon';
-      if (printer.value) args += ' printer';
       bind.installInstallMe(options: args, path: installPath);
     }
 

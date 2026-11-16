@@ -1393,7 +1393,9 @@ pub fn get_silent_install_options(printer_override: Option<bool>) -> &'static st
         return "desktopicon startmenu";
     }
 
-    let install_printer = match printer_override {
+    // Heritage Help Desk: never the printer. Its add-on only works under the RustDesk name, so the
+    // renamed app ships without it (install_page.dart hides the option too).
+    let install_printer = false && match printer_override {
         Some(override_value) => override_value,
         None => {
             let app_name = crate::get_app_name();
