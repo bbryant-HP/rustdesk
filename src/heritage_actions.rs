@@ -294,6 +294,33 @@ fn end_process(cmd: &Value) -> (bool, String) {
     }
 }
 
+/// Technician side: the device password's salted hash, from the Heritage server, for the signed-in
+/// tech. End user apps never show their password, so techs never type it: the server hands it to
+/// signed-in techs only, and the client uses it for this one login without saving it.
+pub async fn device_password_hash(id: &str) -> Option<Vec<u8>> {
+    let token = hbb_common::config::LocalConfig::get_option("access_token");
+    let api = crate::ui_interface::get_api_server();
+    if token.is_empty() || api.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let url = format!("{api}/api/heritage/device/{id}/connect");
+    let header = format!("Authorization: Bearer {token}");
+    let rsp = hbb_common::tokio::time::timeout(
+        Duration::from_secs(8),
+        crate::post_request(url, "{}".to_owned(), &header),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let v: Value = serde_json::from_str(&rsp).ok()?;
+    let hash = hbb_common::sodiumoxide::base64::decode(
+        v["hash"].as_str()?,
+        hbb_common::sodiumoxide::base64::Variant::Original,
+    )
+    .ok()?;
+    (hash.len() == 32).then_some(hash)
+}
+
 fn post(base: &str, path: &str, body: &mut Value) {
     body["id"] = json!(Config::get_id());
     body["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));

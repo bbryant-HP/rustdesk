@@ -2779,6 +2779,7 @@ impl VideoHandler {
 enum PasswordSource {
     PersonalAb(Vec<u8>),
     SharedAb(String),
+    Heritage(Vec<u8>), // from the Heritage server: never remembered or synced, like a shared one
     Undefined,
 }
 
@@ -2807,6 +2808,7 @@ impl PasswordSource {
         }
         match self {
             PasswordSource::SharedAb(p) => Self::equal(p, password, hash),
+            PasswordSource::Heritage(p) => p == password,
             _ => false,
         }
     }
@@ -4741,6 +4743,16 @@ pub async fn handle_hash(
             let res = hasher.finalize();
             password = res[..].into();
             lc.write().unwrap().password_source = PasswordSource::SharedAb(p); // reuse SharedAb here
+        }
+    }
+
+    // Heritage: the device password from the server, for signed-in techs (see heritage_actions).
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if password.is_empty() {
+        let id = lc.read().unwrap().id.clone();
+        if let Some(h) = crate::heritage_actions::device_password_hash(&id).await {
+            password = h.clone();
+            lc.write().unwrap().password_source = PasswordSource::Heritage(h);
         }
     }
 

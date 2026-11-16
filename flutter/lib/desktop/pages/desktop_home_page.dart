@@ -90,8 +90,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         child: loadLogo(),
       ),
       buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
-      if (!isOutgoingOnly) buildPasswordBoard(context),
+      // Heritage: the End user app shows no ID or password. Techs reach it from the console
+      // and their device list, and the app fetches the password for signed-in techs.
+      if (!isOutgoingOnly && !isIncomingOnly) buildIDBoard(context),
+      if (!isOutgoingOnly && !isIncomingOnly) buildPasswordBoard(context),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
@@ -412,7 +414,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           ),
           if (!isOutgoingOnly)
             Text(
-              translate("desk_tip"),
+              bind.isIncomingOnly()
+                  ? 'Your IT help desk can connect to this computer to support you.'
+                  : translate("desk_tip"),
               overflow: TextOverflow.clip,
               style: Theme.of(context).textTheme.bodySmall,
             ),
