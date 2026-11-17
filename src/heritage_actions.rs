@@ -38,6 +38,9 @@ pub fn handle(h: Value, heartbeat_url: &str) {
     if h["processes"].as_bool() == Some(true) {
         send_processes(base.clone());
     }
+    if h["update"].as_bool() == Some(true) {
+        crate::heritage_update::check_now(); // an admin clicked Update in the console
+    }
     if let Some(list) = h["actions"].as_array() {
         for a in list {
             if let Some(s) = a.as_str() {

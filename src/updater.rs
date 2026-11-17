@@ -277,7 +277,7 @@ fn verified_update_path(
 }
 
 #[cfg(target_os = "windows")]
-fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf, expected_sha256: &str) {
+pub(crate) fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf, expected_sha256: &str) {
     log::debug!(
         "New version is downloaded, update begin, update msi: {update_msi}, version: {version}, file: {:?}",
         file_path.to_str()

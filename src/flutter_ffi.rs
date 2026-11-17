@@ -1159,6 +1159,10 @@ pub fn main_get_license() -> String {
 }
 
 pub fn main_get_version() -> String {
+    // Only the About page shows this. Heritage builds show their own version first.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    return crate::heritage_update::display_version();
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     get_version()
 }
 

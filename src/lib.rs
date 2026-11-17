@@ -73,6 +73,9 @@ mod hbbs_http;
 mod heritage_stats;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod heritage_actions;
+// Heritage Help Desk: its own version number, and updates from the Heritage server.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod heritage_update;
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod clipboard_file;
