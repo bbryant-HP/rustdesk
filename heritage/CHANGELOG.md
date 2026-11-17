@@ -6,6 +6,11 @@ pushing. Versions are year.month.build, where build is the GitHub Actions run nu
 
 ## Next release
 
+- Test release for updates from the Heritage server: no other changes. A PC on 2026.11.10
+  should update itself to this build when an admin clicks Update in the console.
+
+## 2026.11.10 (2026-11-17)
+
 - Updates from the Heritage server: End user and Full installs check the server about once an
   hour and install a newer build by themselves, waiting until nobody is connected. Admins turn
   this on, or update chosen PCs now, in the console. Each update is signed by the server and
