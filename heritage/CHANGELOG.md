@@ -6,6 +6,11 @@ pushing. Versions are year.month.build, where build is the GitHub Actions run nu
 
 ## Next release
 
+- Every install, Technician included, reports its Heritage version to the server with its
+  device info, so the console's Devices list shows which build each computer runs.
+
+## 2026.11.11 (2026-11-17)
+
 - Test release for updates from the Heritage server: no other changes. A PC on 2026.11.10
   should update itself to this build when an admin clicks Update in the console.
 

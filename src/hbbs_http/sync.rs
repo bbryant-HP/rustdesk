@@ -134,6 +134,11 @@ async fn start_hbbs_sync_async() {
                     info_uploaded.last_uploaded.map(|x| x.elapsed() >= UPLOAD_SYSINFO_TIMEOUT).unwrap_or(true);
                 if need_upload {
                     v["version"] = json!(crate::VERSION);
+                    // Heritage Help Desk: its own build number for the console's Devices list.
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    if !crate::heritage_update::VERSION.is_empty() {
+                        v["heritage_ver"] = json!(crate::heritage_update::VERSION);
+                    }
                     v["id"] = json!(id);
                     v["uuid"] = json!(crate::encode64(hbb_common::get_uuid()));
                     let ab_name = Config::get_option(keys::OPTION_PRESET_ADDRESS_BOOK_NAME);
