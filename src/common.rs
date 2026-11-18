@@ -1177,6 +1177,13 @@ fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
 // Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    // Heritage Help Desk: builds update from the Heritage server only (heritage_update.rs). A
+    // newer stock RustDesk from rustdesk.com would replace the Heritage app, so never offer one.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if !crate::heritage_update::VERSION.is_empty() {
+        clear_software_update_url();
+        return Ok(());
+    }
     let (request, url) =
         hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
     let proxy_conf = Config::get_socks();

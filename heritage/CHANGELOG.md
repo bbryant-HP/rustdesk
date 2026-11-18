@@ -6,6 +6,14 @@ pushing. Versions are year.month.build, where build is the GitHub Actions run nu
 
 ## Next release
 
+- "Check for updates" button on the About page (End user and Full installs): asks the Heritage
+  server for the newest build, which then installs within a few minutes, once nobody is
+  connected, the same as when IT clicks Update in the console.
+- RustDesk's own update check and Auto update setting are off: a stock RustDesk from
+  rustdesk.com would replace the Heritage app. Heritage builds update from the Heritage server.
+
+## 2026.11.12 (2026-11-17)
+
 - Every install, Technician included, reports its Heritage version to the server with its
   device info, so the console's Devices list shows which build each computer runs.
 

@@ -57,6 +57,27 @@ pub fn check_now() {
 #[cfg(windows)]
 pub use imp::start;
 
+/// "Check for updates" on the About page, as a message for the person at the PC. It asks the
+/// server to update this install, the same as an admin clicking Update in the console; the
+/// service then checks, verifies and installs as usual.
+#[cfg(windows)]
+pub fn request_update() -> String {
+    if VERSION.is_empty() {
+        return "This build can't update itself.".to_owned();
+    }
+    if hbb_common::config::is_outgoing_only() {
+        return "This app is updated by reinstalling it from your IT help desk.".to_owned();
+    }
+    match imp::request_update() {
+        Ok(Some(v)) => format!(
+            "Version {v} is available. It installs within a few minutes, once nobody is \
+             connected to this computer, and the app restarts."
+        ),
+        Ok(None) => format!("You have the newest version ({VERSION})."),
+        Err(e) => format!("Couldn't check for updates: {e}"),
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{is_newer, VERSION};
@@ -146,6 +167,35 @@ mod imp {
             return "".to_owned();
         }
         url
+    }
+
+    /// Runs in the app (not the service): the version the server will install, or None if this
+    /// one is current.
+    pub fn request_update() -> ResultType<Option<String>> {
+        let api = crate::ui_interface::get_api_server();
+        if api.is_empty() || crate::is_public(&api) {
+            bail!("no help desk server is set");
+        }
+        let body = json!({
+            "id": crate::ui_interface::get_id(),
+            "uuid": crate::encode64(hbb_common::get_uuid()),
+            "type": conn_type(),
+            "version": VERSION,
+        });
+        let client = crate::hbbs_http::create_http_client_with_url(&api);
+        let rsp = client
+            .post(format!("{api}/api/heritage/update/request"))
+            .json(&body)
+            .timeout(Duration::from_secs(20))
+            .send()?;
+        if rsp.status() == reqwest::StatusCode::NOT_FOUND {
+            bail!("this computer hasn't checked in with the help desk server yet");
+        }
+        let rsp: Value = rsp.error_for_status()?.json()?;
+        Ok(match (rsp["status"].as_str(), rsp["version"].as_str()) {
+            (Some("updating"), Some(v)) => Some(v.to_owned()),
+            _ => None,
+        })
     }
 
     fn check_and_update() -> ResultType<Next> {

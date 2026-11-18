@@ -1166,6 +1166,14 @@ pub fn main_get_version() -> String {
     get_version()
 }
 
+// Heritage Help Desk: "Check for updates" on the About page.
+pub fn main_heritage_check_update() -> String {
+    #[cfg(windows)]
+    return crate::heritage_update::request_update();
+    #[cfg(not(windows))]
+    return "Updates from the help desk server are for Windows only.".to_owned();
+}
+
 pub fn main_get_fav() -> Vec<String> {
     get_fav()
 }

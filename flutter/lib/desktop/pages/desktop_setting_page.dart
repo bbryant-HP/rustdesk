@@ -524,7 +524,9 @@ class _GeneralState extends State<_General> {
   Widget other() {
     final incomingOnly = bind.isIncomingOnly();
     final outgoingOnly = bind.isOutgoingOnly();
-    final showAutoUpdate = (isWindows && bind.mainIsInstalled()) ||
+    // Heritage Help Desk: Heritage installs update from the Heritage server (About page), never
+    // from rustdesk.com, so RustDesk's own Auto update is hidden.
+    final showAutoUpdate = (isWindows && bind.mainIsInstalled() && !bind.isCustomClient()) ||
     (isMacOS && bind.mainIsInstalled() && bind.mainIsInstalledDaemon(prompt: false) && !bind.isCustomClient());
     final children = <Widget>[
       if (!isWeb && !incomingOnly)
@@ -2615,6 +2617,8 @@ class _AboutState extends State<_About> {
               SelectionArea(
                   child: Text('${translate('ID')}: $myId')
                       .marginSymmetric(vertical: 4.0)),
+              if (isWindows && bind.mainIsInstalled() && !bind.isOutgoingOnly())
+                const _HeritageUpdateCheck(),
               InkWell(
                   onTap: () {
                     launchUrlString('https://rustdesk.com/privacy.html');
@@ -2663,6 +2667,56 @@ class _AboutState extends State<_About> {
         ]),
       );
     });
+  }
+}
+
+// Heritage Help Desk: asks the help desk server to update this install now, the same as IT
+// clicking Update in the console. The service downloads, checks and installs it.
+class _HeritageUpdateCheck extends StatefulWidget {
+  const _HeritageUpdateCheck({Key? key}) : super(key: key);
+
+  @override
+  State<_HeritageUpdateCheck> createState() => _HeritageUpdateCheckState();
+}
+
+class _HeritageUpdateCheckState extends State<_HeritageUpdateCheck> {
+  bool _checking = false;
+  String _result = '';
+
+  Future<void> _check() async {
+    setState(() {
+      _checking = true;
+      _result = '';
+    });
+    final result = await bind.mainHeritageCheckUpdate();
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _result = result;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          ElevatedButton(
+            onPressed: _checking ? null : _check,
+            child: Text(_checking ? 'Checking…' : 'Check for updates'),
+          ),
+          if (_checking)
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ).marginOnly(left: 12),
+        ]),
+        if (_result.isNotEmpty)
+          SelectionArea(child: Text(_result)).marginOnly(top: 6),
+      ],
+    ).marginSymmetric(vertical: 8.0);
   }
 }
 
