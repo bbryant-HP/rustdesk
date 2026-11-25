@@ -89,6 +89,13 @@ class _PeerTabPageState extends State<PeerTabPage>
     hideAbTagsPanel.value =
         bind.mainGetLocalOption(key: kOptionHideAbTagsPanel) == 'Y';
     loadHeritageSection();
+    // Heritage: reopened on the Phones side with Discovered saved (an older build): start on Recent instead.
+    if (heritagePhones.value &&
+        gFFI.peerTabModel.currentTab == PeerTabIndex.lan.index) {
+      gFFI.peerTabModel.setCurrentTab(PeerTabIndex.recent.index);
+      bind.setLocalFlutterOption(
+          k: kOptionPeerTabIndex, v: PeerTabIndex.recent.index.toString());
+    }
   }
 
   Future<void> handleTabSelection(int tabIndex) async {
@@ -206,9 +213,12 @@ class _PeerTabPageState extends State<PeerTabPage>
           style: const ButtonStyle(visualDensity: VisualDensity.compact),
           onSelectionChanged: (s) async {
             setHeritageSection(phones: s.first);
-            // Phones are never discovered on the office network: leave Discovered for Recent.
+            // Phones are never discovered on the office network: leave Discovered for Recent, and save
+            // that, so the app doesn't reopen on a Discovered list with nothing in it.
             if (s.first && model.currentTab == PeerTabIndex.lan.index) {
               await handleTabSelection(PeerTabIndex.recent.index);
+              await bind.setLocalFlutterOption(
+                  k: kOptionPeerTabIndex, v: PeerTabIndex.recent.index.toString());
             }
           },
         )).paddingOnly(bottom: 8);
