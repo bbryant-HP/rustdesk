@@ -16,6 +16,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../common.dart';
 import '../../models/peer_model.dart';
 import '../../models/platform_model.dart';
+import 'heritage_section.dart';
 import 'peer_card.dart';
 
 typedef PeerFilter = bool Function(Peer peer);
@@ -363,6 +364,8 @@ class _PeersViewState extends State<_PeersView>
     if (widget.peerFilter != null) {
       peers = peers.where((peer) => widget.peerFilter!(peer)).toList();
     }
+    // Heritage: only the computers or only the phones, per the switch above the lists.
+    peers = peers.where(inHeritageSection).toList();
 
     // fallback to id sorting
     if (!PeerSortType.values.contains(sortedBy)) {

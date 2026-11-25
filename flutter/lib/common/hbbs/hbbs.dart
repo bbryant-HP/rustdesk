@@ -121,6 +121,8 @@ class PeerPayload {
         return kPeerPlatformMacOS;
       case 'android':
         return kPeerPlatformAndroid;
+      case 'ios':
+        return kPeerPlatformIOS; // Heritage: drivers' iPhones, for the Phones side of the device lists
       default:
         if (fieldStr.toLowerCase().contains('linux')) {
           return kPeerPlatformLinux;

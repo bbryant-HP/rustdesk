@@ -6,6 +6,13 @@ pushing. Versions are year.month.build, where build is the GitHub Actions run nu
 
 ## Next release
 
+- Computers / Phones switch above the device lists: Computers shows the PCs, Phones shows the
+  drivers' iPhones (from the Heritage phone stand-in), in Recent, Favorites, Address book and
+  Accessible devices. Discovered is under Computers only. The app remembers the side last used.
+- Technicians now use the Full app: the Technician installer is no longer offered.
+
+## 2026.11.13 (2026-11-18)
+
 - "Check for updates" button on the About page (End user and Full installs): asks the Heritage
   server for the newest build, which then installs within a few minutes, once nobody is
   connected, the same as when IT clicks Update in the console.

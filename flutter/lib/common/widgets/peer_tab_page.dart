@@ -4,6 +4,7 @@ import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/address_book.dart';
 import 'package:flutter_hbb/common/widgets/dialog.dart';
+import 'package:flutter_hbb/common/widgets/heritage_section.dart';
 import 'package:flutter_hbb/common/widgets/my_group.dart';
 import 'package:flutter_hbb/common/widgets/peers_view.dart';
 import 'package:flutter_hbb/common/widgets/peer_card.dart';
@@ -87,6 +88,7 @@ class _PeerTabPageState extends State<PeerTabPage>
     }
     hideAbTagsPanel.value =
         bind.mainGetLocalOption(key: kOptionHideAbTagsPanel) == 'Y';
+    loadHeritageSection();
   }
 
   Future<void> handleTabSelection(int tabIndex) async {
@@ -110,6 +112,7 @@ class _PeerTabPageState extends State<PeerTabPage>
       textBaseline: TextBaseline.ideographic,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _createSectionSwitch(context),
         Obx(() => SizedBox(
               height: 32,
               child: Container(
@@ -138,12 +141,16 @@ class _PeerTabPageState extends State<PeerTabPage>
   Widget _createSwitchBar(BuildContext context) {
     final model = Provider.of<PeerTabModel>(context);
     var counter = -1;
+    // Heritage: no Discovered under Phones. Reordering works on the full list, so it's off on that side.
+    final phones = heritagePhones.value;
     return ReorderableListView(
         buildDefaultDragHandles: false,
-        onReorder: model.reorder,
+        onReorder: phones ? (_, __) {} : model.reorder,
         scrollDirection: Axis.horizontal,
         physics: NeverScrollableScrollPhysics(),
-        children: model.visibleEnabledOrderedIndexs.map((t) {
+        children: model.visibleEnabledOrderedIndexs
+            .where((t) => !(phones && t == PeerTabIndex.lan.index))
+            .map((t) {
           final selected = model.currentTab == t;
           final color = selected
               ? MyTheme.tabbar(context).selectedTextColor
@@ -186,6 +193,27 @@ class _PeerTabPageState extends State<PeerTabPage>
         }).toList());
   }
 
+  /// Heritage: Computers | Phones above the device lists.
+  Widget _createSectionSwitch(BuildContext context) {
+    final model = Provider.of<PeerTabModel>(context);
+    return Obx(() => SegmentedButton<bool>(
+          segments: [
+            ButtonSegment(value: false, label: Text(translate('Computers'))),
+            ButtonSegment(value: true, label: Text(translate('Phones'))),
+          ],
+          selected: {heritagePhones.value},
+          showSelectedIcon: false,
+          style: const ButtonStyle(visualDensity: VisualDensity.compact),
+          onSelectionChanged: (s) async {
+            setHeritageSection(phones: s.first);
+            // Phones are never discovered on the office network: leave Discovered for Recent.
+            if (s.first && model.currentTab == PeerTabIndex.lan.index) {
+              await handleTabSelection(PeerTabIndex.recent.index);
+            }
+          },
+        )).paddingOnly(bottom: 8);
+  }
+
   Widget _createPeersView() {
     final model = Provider.of<PeerTabModel>(context);
     Widget child;
@@ -204,9 +232,12 @@ class _PeerTabPageState extends State<PeerTabPage>
         child = entries[0].widget;
       }
     }
+    // Heritage: a new subtree per side, so each list filters again when the switch changes.
     return Expanded(
-        child: child.marginSymmetric(
-            vertical: (isDesktop || isWebDesktop) ? 12.0 : 6.0));
+        child: Obx(() => KeyedSubtree(
+            key: ValueKey('heritage-${heritagePhones.value}-${model.currentTab}'),
+            child: child.marginSymmetric(
+                vertical: (isDesktop || isWebDesktop) ? 12.0 : 6.0))));
   }
 
   Widget _createRefresh(
